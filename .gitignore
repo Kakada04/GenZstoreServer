@@ -1,0 +1,42 @@
+## [ Build Artifacts ]
+bin
+obj
+publish
+
+## [ Environment & Secrets ]
+# Do NOT commit your actual appsettings.json if it contains production secrets
+# Instead, use appsettings.Development.json or Environment Variables
+.env
+.user
+.userosscache
+.sln.doccache
+
+## [ Visual Studio  VS Code ]
+.vs
+.vscode
+.suo
+.user
+.userosscache
+.sln.doccache
+.swp
+.bak
+
+## [ Docker & DevOps ]
+# Ignore local docker volumes or temporary logs
+.dockerignore
+docker-compose.override.yml
+objDocker
+
+## [ Databases ]
+# If using SQLite for local dev (like in your Routify project)
+.db
+.db-shm
+.db-wal
+
+## [ OS Generated Files ]
+.DS_Store
+Thumbs.db
+
+## [ Logs ]
+logs
+.log

@@ -42,26 +42,24 @@ namespace GenZStore.Queries
         {
             using var conn = _connectionFactory.CreateConnection();
 
-            // ? SQL: Select items with Pagination AND get Total Count
-            string sql = @"
-                -- 1. Get Paginated Items
-                SELECT Id, Name, Description, Usage, Price, Quantity, 
-                       CategoryId, ImageUrl, CreatedAt, UpdatedAt 
-                FROM Products 
-                ORDER BY CreatedAt DESC
-                OFFSET @Offset ROWS FETCH NEXT @PageSize ROWS ONLY;
+            // For MySQL/MariaDB use LIMIT/OFFSET. Run two separate queries (items + count)
+            string sqlItems = @"
+                SELECT `Id`, `Name`, `Description`, `Usage`, `Price`, `Quantity`,
+                       `CategoryId`, `ImageUrl`, `CreatedAt`, `UpdatedAt`
+                FROM `Products`
+                ORDER BY `CreatedAt` DESC
+                LIMIT @PageSize OFFSET @Offset;";
 
-                -- 2. Get Total Count
-                SELECT COUNT(*) FROM Products;";
+            string sqlCount = "SELECT COUNT(*) FROM `Products`;";
 
-            using var multi = await conn.QueryMultipleAsync(sql, new
+            var parameters = new
             {
                 Offset = (page - 1) * pageSize,
                 PageSize = pageSize
-            });
+            };
 
-            var items = await multi.ReadAsync<ProductResultDto>();
-            var totalCount = await multi.ReadFirstAsync<int>();
+            var items = await conn.QueryAsync<ProductResultDto>(sqlItems, parameters);
+            var totalCount = await conn.QuerySingleAsync<int>(sqlCount);
 
             return new PagedResult<ProductResultDto>
             {
@@ -75,20 +73,20 @@ namespace GenZStore.Queries
         public async Task<ProductResultDto?> GetByIdAsync(Guid productId)
         {
             using var conn = _connectionFactory.CreateConnection();
-            string sql = @"SELECT Id, Name, Description, Usage, Price, Quantity, 
-                                  CategoryId, ImageUrl, CreatedAt, UpdatedAt 
-                           FROM Products 
-                           WHERE Id = @Id";
+            string sql = @"SELECT `Id`, `Name`, `Description`, `Usage`, `Price`, `Quantity`,
+                                  `CategoryId`, `ImageUrl`, `CreatedAt`, `UpdatedAt`
+                           FROM `Products`
+                           WHERE `Id` = @Id";
             return await conn.QueryFirstOrDefaultAsync<ProductResultDto>(sql, new { Id = productId });
         }
 
         public async Task<IEnumerable<ProductResultDto>> SearchByNameAsync(string name)
         {
             using var conn = _connectionFactory.CreateConnection();
-            string sql = @"SELECT Id, Name, Description, Usage, Price, Quantity, 
-                                  CategoryId, ImageUrl, CreatedAt, UpdatedAt 
-                           FROM Products 
-                           WHERE Name LIKE @Name";
+            string sql = @"SELECT `Id`, `Name`, `Description`, `Usage`, `Price`, `Quantity`,
+                                  `CategoryId`, `ImageUrl`, `CreatedAt`, `UpdatedAt`
+                           FROM `Products`
+                           WHERE `Name` LIKE @Name";
             return await conn.QueryAsync<ProductResultDto>(sql, new { Name = $"%{name}%" });
         }
     }

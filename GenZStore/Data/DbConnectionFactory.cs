@@ -1,5 +1,5 @@
 using System.Data;
-using Microsoft.Data.SqlClient;
+using MySqlConnector;
 using Microsoft.Extensions.Configuration;
 
 namespace GenZStore.Data
@@ -21,7 +21,7 @@ namespace GenZStore.Data
         public IDbConnection CreateConnection()
         {
             var connectionString = _configuration.GetConnectionString("DefaultConnection");
-            return new SqlConnection(connectionString);
+            return new MySqlConnection(connectionString);
         }
     }
 }

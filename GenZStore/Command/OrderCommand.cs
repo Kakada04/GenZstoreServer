@@ -52,6 +52,7 @@ namespace GenZStore.Commands
                 Status = "Pending",
                 CreatedAt = DateTime.UtcNow,
                 UpdatedAt = DateTime.UtcNow,
+               
                 OrderItems = new List<OrderItem>()
             };
 

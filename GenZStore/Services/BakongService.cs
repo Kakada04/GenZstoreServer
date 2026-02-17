@@ -1,130 +1,129 @@
 ﻿using GenZStore.Data;
 using GenZStore.DTOs;
+using kh.gov.nbc.bakong_khqr;
+using kh.gov.nbc.bakong_khqr.model;
 using Microsoft.EntityFrameworkCore;
 using QRCoder;
+using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text;
+using System.Reflection; // Required for the fix
 
 namespace GenZStore.Services
 {
     public class BakongService
     {
         private readonly AppDbContext _context;
+        private readonly HttpClient _httpClient;
+        private const string BAKONG_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJkYXRhIjp7ImlkIjoiNzZmYjhlNjZlZGExNGI4YyJ9LCJpYXQiOjE3NzExMzA1MzIsImV4cCI6MTc3ODkwNjUzMn0.mTSy3SpujW1YI1h7vZhdxJvkt0FYpHvdvXRxGNNAUTI";
+        private const string BAKONG_API_URL = "https://api-bakong.nbc.gov.kh/v1";
 
-        public BakongService(AppDbContext context)
+        public BakongService(AppDbContext context, HttpClient httpClient)
         {
             _context = context;
+            _httpClient = httpClient;
+            _httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", BAKONG_TOKEN);
         }
 
         public async Task<PaymentResponseDto?> GenerateKhqrAsync(Guid orderId)
         {
             var order = await _context.Orders.FindAsync(orderId);
-            if (order == null) return null;
+            if (order == null) throw new Exception("Order ID not found in database.");
 
-            // ---------------------------------------------------------
-            // 1. SETUP YOUR PERSONAL INFO
-            // ---------------------------------------------------------
-            var abaAccountId = "2819314";  // 👈 YOUR ID HERE
-            var merchantName = "GenZStore"; // Your Name or Shop Name
-            var city = "Phnom Penh";
-            var currency = "840"; // 840 = USD, 116 = KHR
-            var amount = order.TotalAmount.ToString("F2"); // Format: 10.50
+            // 1. Setup Merchant Info
+            var merchantInfo = new MerchantInfo
+            {
+                BakongAccountID = "kakada_ung@bkrt",
+                MerchantName = "GenZStore",
+                MerchantID = "123456",
+                AcquiringBank = "Bakong",
+                MerchantCity = "Phnom Penh",
+                Currency = KHQRCurrency.USD,
+                Amount = (double)order.TotalAmount,
+                BillNumber = orderId.ToString("N").Substring(0, 20),
+                StoreLabel = "GenZStore",
+                TerminalLabel = "Cashier-01",
+                ExpirationTimestamp = DateTimeOffset.Now.AddMinutes(15).ToUnixTimeMilliseconds()
+            };
 
-            // ---------------------------------------------------------
-            // 2. BUILD THE RAW STRING (EMVCo Standard)
-            // ---------------------------------------------------------
-            // This is the structure Bakong/ABA expects.
-            // We use StringBuilder to tag pieces together safely.
+            // 2. Generate KHQR String via SDK
+            var result = BakongKHQR.GenerateMerchant(merchantInfo);
 
-            var sb = new StringBuilder();
+            if (result.Status.Code != 0)
+            {
+                throw new Exception($"Bakong SDK Error: {result.Status.Message} (Code: {result.Status.Code})");
+            }
 
-            // 00: Payload Format (01)
-            sb.Append("000201");
+            // 3. Extract QR String SAFELY (Fixes CS1061)
+            // We use a helper function to find the property because SDK names vary (QR, QrCode, qr, etc.)
+            string fullKhqr = GetQrStringFromData(result.Data);
 
-            // 01: Point of Initiation (12 = Dynamic/One-time)
-            sb.Append("010212");
+            if (string.IsNullOrEmpty(fullKhqr))
+            {
+                throw new Exception("Bakong SDK returned success but QR string was empty.");
+            }
 
-            // 29: Merchant Account Info (Bakong System)
-            // We construct the sub-content first to get its length
-            var merchantInfo = $"0006bakong01{abaAccountId.Length:D2}{abaAccountId}";
-            sb.Append($"29{merchantInfo.Length:D2}{merchantInfo}");
+            // 4. Compute MD5
+            string md5Hash = ComputeMd5(fullKhqr);
 
-            // 52: Merchant Category Code (General)
-            sb.Append("52045999");
-
-            // 53: Currency (USD)
-            sb.Append($"5303{currency}");
-
-            // 54: Amount
-            sb.Append($"54{amount.Length:D2}{amount}");
-
-            // 58: Country
-            sb.Append("5802KH");
-
-            // 59: Merchant Name
-            sb.Append($"59{merchantName.Length:D2}{merchantName}");
-
-            // 60: City
-            sb.Append($"60{city.Length:D2}{city}");
-
-            // 62: Additional Data (Order ID)
-            // Truncate Order ID to fit cleanly if needed
-            var refId = orderId.ToString("N").Substring(0, 20);
-            var additionalData = $"01{refId.Length:D2}{refId}";
-            sb.Append($"62{additionalData.Length:D2}{additionalData}");
-
-            // 63: CRC (Checksum) Placeholder
-            sb.Append("6304");
-
-            // ---------------------------------------------------------
-            // 3. CALCULATE CHECKSUM (The Magic Math)
-            // ---------------------------------------------------------
-            // The bank app checks this to prove the QR is valid.
-            var crc = CalculateCrc16(sb.ToString());
-            var fullKhqr = sb.ToString() + crc;
-
-            // ---------------------------------------------------------
-            // 4. GENERATE IMAGE
-            // ---------------------------------------------------------
+            // 5. Generate QR Image
             using var qrGenerator = new QRCodeGenerator();
             using var qrCodeData = qrGenerator.CreateQrCode(fullKhqr, QRCodeGenerator.ECCLevel.Q);
             using var qrCode = new PngByteQRCode(qrCodeData);
             var qrBytes = qrCode.GetGraphic(20);
-            var base64Image = Convert.ToBase64String(qrBytes);
 
             return new PaymentResponseDto
             {
                 OrderId = order.Id,
                 KhqrString = fullKhqr,
-                QrImageBase64 = $"data:image/png;base64,{base64Image}",
+                QrImageBase64 = $"data:image/png;base64,{Convert.ToBase64String(qrBytes)}",
                 Amount = order.TotalAmount,
                 Currency = "USD",
-                Md5Hash = Guid.NewGuid()
+                Md5Hash = md5Hash,
+                // AppDeeplink = await GenerateDeepLinkAsync(fullKhqr) // Optional: Uncomment if you need deep links
             };
         }
 
-        // 🧠 STANDARD CRC16-CCITT ALGORITHM (Do not change this!)
-        private static string CalculateCrc16(string data)
+        public async Task<bool> CheckPaymentStatusAsync(string md5Hash)
         {
-            // Initial value for CRC-CCITT (0xFFFF)
-            ushort crc = 0xFFFF;
-            // Polynomial (0x1021)
-            ushort polynomial = 0x1021;
+            var response = await _httpClient.PostAsJsonAsync($"{BAKONG_API_URL}/check_transaction_by_md5", new { md5 = md5Hash });
 
-            byte[] bytes = Encoding.UTF8.GetBytes(data);
-
-            foreach (byte b in bytes)
+            if (response.IsSuccessStatusCode)
             {
-                for (int i = 0; i < 8; i++)
-                {
-                    bool bit = ((b >> (7 - i) & 1) == 1);
-                    bool c15 = ((crc >> 15 & 1) == 1);
-                    crc <<= 1;
-                    if (c15 ^ bit) crc ^= polynomial;
-                }
+                var data = await response.Content.ReadFromJsonAsync<BakongStatusResponse>();
+                return data?.ResponseCode == 0;
             }
-
-            // Return as 4-character Hex String (e.g., "A1B2")
-            return (crc & 0xFFFF).ToString("X4");
+            return false;
         }
+
+        private string ComputeMd5(string input)
+        {
+            using var md5 = MD5.Create();
+            var bytes = Encoding.UTF8.GetBytes(input);
+            var hash = md5.ComputeHash(bytes);
+            return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+        }
+
+        // ✅ THE FIX: Helper to safely find the QR property
+        private string GetQrStringFromData(object dataObj)
+        {
+            if (dataObj == null) return null;
+
+            var type = dataObj.GetType();
+            // Try all common naming conventions for the QR property
+            var prop = type.GetProperty("QrCode")
+                    ?? type.GetProperty("QR")
+                    ?? type.GetProperty("QRCode")
+                    ?? type.GetProperty("qr")
+                    ?? type.GetProperty("Khqr");
+
+            return prop?.GetValue(dataObj)?.ToString();
+        }
+    }
+
+    public class BakongStatusResponse
+    {
+        public int ResponseCode { get; set; }
+        public string ResponseMessage { get; set; }
     }
 }

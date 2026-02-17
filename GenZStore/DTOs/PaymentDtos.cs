@@ -16,7 +16,7 @@
         public string AppDeeplink { get; set; }     // Button to open ABA App directly
         public string CheckoutUrl { get; set; }     // URL for hosted checkout page
         public string QrImageBase64 { get; set; }   // (Optional) if returned
-        public Guid Md5Hash { get; set; }              // (Optional) if you want to store a hash for verification
+        public string Md5Hash { get; set; }              // (Optional) if you want to store a hash for verification
     }
 
     public class PaymentCallbackDto

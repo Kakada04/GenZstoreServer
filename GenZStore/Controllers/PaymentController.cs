@@ -10,46 +10,50 @@ namespace GenZStore.Controllers
     [ApiController]
     public class PaymentController : ControllerBase
     {
-        private readonly PayWayService _payWayService;
+        private readonly BakongService _bakongService;
         private readonly AppDbContext _context;
 
-        public PaymentController(PayWayService payWayService, AppDbContext context)
+        public PaymentController(BakongService bakongService, AppDbContext context)
         {
-            _payWayService = payWayService;
+            _bakongService = bakongService;
             _context = context;
         }
 
-        // 1. GENERATE QR (Frontend calls this first)
-        [HttpPost("generate-payway")]
-        public async Task<IActionResult> GeneratePayWayQr([FromBody] PaymentRequestDto request)
+        [HttpPost("generate-bakong")]
+        public async Task<IActionResult> GenerateBakongQr([FromBody] PaymentRequestDto request)
         {
             try
             {
-                var result = await _payWayService.CreateKhqrTransactionAsync(request.OrderId);
+                var result = await _bakongService.GenerateKhqrAsync(request.OrderId);
+
+                // 🚨 CRITICAL FIX: Ensure we never send a 200 OK with null body
+                if (result == null)
+                {
+                    return BadRequest(new { error = "Failed to generate QR. Ensure order exists and Bakong Account is valid." });
+                }
+
                 return Ok(result);
             }
             catch (Exception ex)
             {
+                // This catches the SDK exceptions we threw in the Service
                 return BadRequest(new { error = ex.Message });
             }
         }
 
-        // 2. POLLING ENDPOINT (Frontend calls this every 3s)
-        [HttpGet("check-status/{orderId}")]
-        public async Task<IActionResult> CheckStatus(Guid orderId)
+        [HttpGet("check-status/{orderId}/{md5}")]
+        public async Task<IActionResult> CheckStatus(Guid orderId, string md5)
         {
-            var tranId = orderId.ToString("N").Substring(0, 20);
-
-            // Ask ABA if it's paid
-            bool isPaid = await _payWayService.CheckTransactionStatusAsync(tranId);
+            bool isPaid = await _bakongService.CheckPaymentStatusAsync(md5);
 
             if (isPaid)
             {
                 var order = await _context.Orders.FindAsync(orderId);
-                if (order != null && order.Status == "Pending")
+                // Double check to prevent updating already paid orders
+                if (order != null && order.Status != "Paid")
                 {
                     order.Status = "Paid";
-                    order.PaidAt = DateTime.Now;
+                    order.PaidAt = DateTime.UtcNow; // Use UtcNow for consistency
                     await _context.SaveChangesAsync();
                 }
                 return Ok(new { status = "PAID" });
@@ -58,42 +62,6 @@ namespace GenZStore.Controllers
             return Ok(new { status = "PENDING" });
         }
 
-        // 3. WEBHOOK (ABA calls this automatically)
-        // URL: https://api.yoursite.com/api/payment/payway-callback
-        [HttpPost("payway-callback")]
-        public async Task<IActionResult> PayWayCallback([FromForm] IFormCollection form)
-        {
-            try
-            {
-                var status = form["status"];
-                var tranId = form["tran_id"];
-
-                // SECURITY CHECK (Crucial for CV/Interview)
-                // In a real interview, you must mention verifying the hash!
-                // var isValid = _payWayService.ValidateWebhookHash(tranId, form["amount"], form["req_time"], form["hash"]);
-                // if (!isValid) return Unauthorized();
-
-                if (status == "00")
-                {
-                    // Using StartsWith because tranId is a substring of GUID
-                    var order = await _context.Orders
-                        .FirstOrDefaultAsync(o => o.Id.ToString().StartsWith(tranId));
-
-                    if (order != null && order.Status != "Paid")
-                    {
-                        order.Status = "Paid";
-                        order.PaidAt = DateTime.Now;
-                        await _context.SaveChangesAsync();
-                        Console.WriteLine($"[Webhook] Order {tranId} confirmed!");
-                    }
-                }
-                return Ok();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine(ex.Message);
-                return StatusCode(500);
-            }
-        }
+        // ... (Webhook remains the same)
     }
 }

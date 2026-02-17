@@ -6,43 +6,53 @@ using Microsoft.EntityFrameworkCore;
 public static class DbInitializer
 {
     public static async Task SeedAsync(AppDbContext context,
-                                       UserManager<ApplicationUser> userManager,
-                                       RoleManager<IdentityRole<Guid>> roleManager)
+                                   UserManager<ApplicationUser> userManager,
+                                   RoleManager<IdentityRole<Guid>> roleManager)
     {
-        // Apply migrations
         await context.Database.MigrateAsync();
 
-        // Seed roles
-        if (!await roleManager.RoleExistsAsync("Owner"))
+        // 1. Seed Roles
+        string[] roles = { "Owner", "Customer" };
+        foreach (var role in roles)
         {
-            await roleManager.CreateAsync(new IdentityRole<Guid>("Owner"));
-        }
-        if (!await roleManager.RoleExistsAsync("Customer"))
-        {
-            await roleManager.CreateAsync(new IdentityRole<Guid>("Customer"));
+            if (!await roleManager.RoleExistsAsync(role))
+            {
+                await roleManager.CreateAsync(new IdentityRole<Guid>(role));
+            }
         }
 
-        // Seed admin user
+        // 2. Seed Admin (Owner)
         var adminEmail = "admin@genzstore.local";
-        var adminUser = await userManager.FindByEmailAsync(adminEmail);
-
-        if (adminUser == null)
+        if (await userManager.FindByEmailAsync(adminEmail) == null)
         {
-            var user = new ApplicationUser
+            var admin = new ApplicationUser
             {
                 Id = Guid.NewGuid(),
                 UserName = "admin",
                 Email = adminEmail,
                 Role = "Owner",
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
+                CreatedAt = DateTime.UtcNow
             };
-
-            var result = await userManager.CreateAsync(user, "Admin@123"); // strong default password
-            if (result.Succeeded)
-            {
-                await userManager.AddToRoleAsync(user, "Owner");
-            }
+            var result = await userManager.CreateAsync(admin, "Admin@123");
+            if (result.Succeeded) await userManager.AddToRoleAsync(admin, "Owner");
         }
+
+        // 3. Seed Test Customer 👈 (For your testing)
+        var customerEmail = "kakada@test.local";
+        if (await userManager.FindByEmailAsync(customerEmail) == null)
+        {
+            var customer = new ApplicationUser
+            {
+                Id = Guid.NewGuid(),
+                UserName = "kakada_dev",
+                Email = customerEmail,
+                Role = "Customer",
+                CreatedAt = DateTime.UtcNow
+            };
+            var result = await userManager.CreateAsync(customer, "Customer@123");
+            if (result.Succeeded) await userManager.AddToRoleAsync(customer, "Customer");
+        }
+
+        
     }
 }

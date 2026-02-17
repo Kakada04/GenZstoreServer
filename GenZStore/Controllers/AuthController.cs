@@ -132,7 +132,6 @@ namespace GenZStore.Controllers
         [HttpPost("auto-register")]
         public async Task<IActionResult> AutoRegister([FromBody] AutoRegisterRequest request)
         {
-            // 2️⃣ SAFETY CHECK: If request is null or empty, return clear error
             if (request == null || string.IsNullOrWhiteSpace(request.TelegramId))
             {
                 return BadRequest(new { Message = "Invalid request. TelegramId is required." });
@@ -142,7 +141,7 @@ namespace GenZStore.Controllers
 
             try
             {
-                // 3️⃣ LOGIC: Find or Create User
+                // 1. Find or Create User (Identity)
                 var user = await _userManager.FindByNameAsync(telegramId);
 
                 if (user == null)
@@ -164,22 +163,28 @@ namespace GenZStore.Controllers
                     }
                 }
 
-                // 4️⃣ DATABASE: Ensure Customer Record Exists
+                // 2. Find or Create Customer (Business Logic)
                 var customer = await _context.Customers.FirstOrDefaultAsync(c => c.TelegramId == telegramId);
+
                 if (customer == null)
                 {
                     customer = new Customer
                     {
                         Id = Guid.NewGuid(),
+
+                        // ✅ FIX: Link Customer to the User (This caused the 500 error!)
+                        UserId = user.Id,
+
                         TelegramId = telegramId,
-                        Name = telegramId,
+                        Name = telegramId, // Default name is ID, user can update later
                         CreatedAt = DateTime.UtcNow
                     };
+
                     await _context.Customers.AddAsync(customer);
                     await _context.SaveChangesAsync();
                 }
 
-                // 5️⃣ SUCCESS: Return Tokens
+                // 3. Generate Tokens
                 var accessToken = _tokenService.GenerateAccessToken(user);
                 var refreshToken = _tokenService.GenerateRefreshToken();
 
@@ -197,11 +202,11 @@ namespace GenZStore.Controllers
             }
             catch (Exception ex)
             {
-                // 6️⃣ ERROR LOGGING: This helps you see why it failed
+                // Log the real error to console so you can see it in Vercel/Server logs
+                Console.WriteLine($"Auth Error: {ex.Message} \n {ex.InnerException?.Message}");
                 return StatusCode(500, new { Message = "Internal Server Error", Error = ex.Message });
             }
         }
-        // ...
         public class LoginDto
         {
             public string Username { get; set; }
